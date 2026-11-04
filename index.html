@@ -21,7 +21,7 @@
             una perturbación mientras corre modificará la salida del sistema</p>
         </div>
         <div class="runbar">
-            <button class="primary" id="btn-run" type="button">Pausar</button>
+            <button class="primary" id="btn-run" type="button">Iniciar</button>
             <button id="btn-reset" type="button">Reiniciar</button>
             <label for="speed" class="hint">Velocidad</label>
             <select id="speed">
@@ -30,9 +30,9 @@
                 <option value="5">5 min/s</option>
                 <option value="10">10 min/s</option>
             </select>
-            <span class="status" id="status">
+            <span class="status paused" id="status">
                 <span class="dot"></span>
-                <span id="status-txt">Corriendo · t = 0:00</span>
+                <span id="status-txt">En pausa · t = 0:00</span>
             </span>
         </div>
     </header>
@@ -63,7 +63,7 @@
                         <button class="small" id="sp-up" type="button">+1</button>
                     </div>
                     <input type="range" id="sp" min="10" max="30" step="0.5" value="20">
-                    <p class="hint">Las ventanas abren recién por encima del setpoint + el offset de ventilación.</p>
+                    <p class="hint">Las ventanas abren recién por encima del valor de referencia + el offset de ventilación.</p>
                 </div>
             </section>
 
@@ -91,13 +91,7 @@
 
             <section class="panel">
                 <h2>Controlador</h2>
-                <div class="field">
-                    <span>Ley de control de la calefacción</span>
-                    <div class="seg">
-                        <button type="button" id="mode-pi" aria-pressed="true">PI (mezcladora)</button>
-                        <button type="button" id="mode-onoff" aria-pressed="false">Todo o nada</button>
-                    </div>
-                    </div>
+                <p class="hint">Calefacción: control PI sobre la válvula mezcladora. Ventanas: control proporcional.</p>
                 <div class="field" id="f-kp">
                     <div class="row"><label for="kp">Ganancia Kp</label><span class="val" id="kp-val"></span></div>
                     <input type="range" id="kp" min="0.05" max="2" step="0.05" value="0.25">
@@ -105,10 +99,6 @@
                 <div class="field" id="f-ti">
                     <div class="row"><label for="ti">Tiempo integral Ti (0 = sólo P)</label><span class="val" id="ti-val"></span></div>
                     <input type="range" id="ti" min="0" max="40" step="1" value="15">
-                </div>
-                <div class="field" id="f-hys" hidden>
-                    <div class="row"><label for="hys">Histéresis</label><span class="val" id="hys-val"></span></div>
-                    <input type="range" id="hys" min="0.2" max="3" step="0.1" value="1">
                 </div>
                 <div class="field">
                     <div class="row"><label for="dv">Offset de ventilación</label><span class="val" id="dv-val"></span></div>
@@ -118,6 +108,7 @@
                     <div class="row"><label for="pb">Banda P de ventanas</label><span class="val" id="pb-val"></span></div>
                     <input type="range" id="pb" min="0.5" max="8" step="0.5" value="3">
                 </div>
+                <label class="check"><input type="checkbox" id="ff"> <span>Compensación por radiación (feedforward con la estación meteorológica)</span></label>
             </section>
         </aside>
 
