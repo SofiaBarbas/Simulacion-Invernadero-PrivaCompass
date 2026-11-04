@@ -1,13 +1,163 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Simulador de Clima Compass</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Simulador de Priva Compass</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+    <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-  <h1>Simulador del lazo de temperatura con Priva Compass</h1>
-  <script src="simulacion.js"></script>
+<div class="wrap">
+    <header>
+        <div>
+            <div class="eyebrow">TFI · Tecnologías para la Automatización</div>
+            <h1>Simulador del SLC de temperatura con Priva Compass</h1>
+            <h2>Un sector del invernadero de flores de corte de Leen van Velden.</h2>
+            <p>La caja de medición mide la temperatura, Compass la compara con el valor de referencia 
+            y mueve la calefacción y las ventanas. Cambiar el valor de referencia o agregar
+            una perturbación mientras corre modificará la salida del sistema</p>
+        </div>
+        <div class="runbar">
+            <button class="primary" id="btn-run" type="button">Pausar</button>
+            <button id="btn-reset" type="button">Reiniciar</button>
+            <label for="speed" class="hint">Velocidad</label>
+            <select id="speed">
+                <option value="0.5">1 min/s</option>
+                <option value="2" selected>2 min/s</option>
+                <option value="5">5 min/s</option>
+                <option value="10">10 min/s</option>
+            </select>
+            <span class="status" id="status">
+                <span class="dot"></span>
+                <span id="status-txt">Corriendo · t = 0:00</span>
+            </span>
+        </div>
+    </header>
+
+
+    <!-- ===== INDICADORES DE VALORES ACTUALES ===== -->
+    <div class="readouts">
+        <div class="ro"><div class="k"><span class="sw" style="background:var(--t-in)"></span>Temperatura medida</div><div class="v" id="ro-t">–</div></div>
+        <div class="ro"><div class="k"><span class="sw" style="background:var(--t-sp)"></span>Valor de Referencia</div><div class="v" id="ro-sp">–</div></div>
+        <div class="ro"><div class="k">Error e = r − y</div><div class="v" id="ro-e">–</div></div>
+        <div class="ro"><div class="k">Error medio 10 min</div><div class="v" id="ro-ess">–</div></div>
+        <div class="ro"><div class="k"><span class="sw" style="background:var(--heat)"></span>Calefacción</div><div class="v" id="ro-h">–</div></div>
+        <div class="ro"><div class="k"><span class="sw" style="background:var(--vent)"></span>Ventanas</div><div class="v" id="ro-v">–</div></div>
+    </div>
+
+
+    <div class="main">
+        <!-- ===== MANDOS DE COLUMNA IZQUIERDA ===== -->
+        <aside class="controls">
+
+            <section class="panel">
+                <h2>Entrada</h2>
+                <div class="field">
+                    <label for="sp">Valor referencia de temperatura</label>
+                    <div class="sp-big">
+                        <button class="small" id="sp-down" type="button">−1</button>
+                        <span class="val" id="sp-val">20,0 °C</span>
+                        <button class="small" id="sp-up" type="button">+1</button>
+                    </div>
+                    <input type="range" id="sp" min="10" max="30" step="0.5" value="20">
+                    <p class="hint">Las ventanas abren recién por encima del setpoint + el offset de ventilación.</p>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>Perturbaciones</h2>
+                <div class="btns">
+                    <button type="button" id="ev-sun">Pico de sol (20 min)</button>
+                    <button type="button" id="ev-cold">Frente frío (−8 °C)</button>
+                    <button type="button" id="ev-door">Puerta abierta (5 min)</button>
+                    <button type="button" id="ev-rain" aria-pressed="false">Lluvia: no</button>
+                </div>
+                <div class="field">
+                    <div class="row"><label for="text">Temperatura exterior</label><span class="val" id="text-val"></span></div>
+                    <input type="range" id="text" min="-10" max="35" step="0.5" value="8">
+                </div>
+                <div class="field">
+                    <div class="row"><label for="rad">Radiación solar</label><span class="val" id="rad-val"></span></div>
+                    <input type="range" id="rad" min="0" max="1000" step="10" value="150">
+                </div>
+                <div class="field">
+                    <div class="row"><label for="wind">Viento</label><span class="val" id="wind-val"></span></div>
+                    <input type="range" id="wind" min="0" max="20" step="0.5" value="3">
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>Controlador</h2>
+                <div class="field">
+                    <span>Ley de control de la calefacción</span>
+                    <div class="seg">
+                        <button type="button" id="mode-pi" aria-pressed="true">PI (mezcladora)</button>
+                        <button type="button" id="mode-onoff" aria-pressed="false">Todo o nada</button>
+                    </div>
+                    </div>
+                <div class="field" id="f-kp">
+                    <div class="row"><label for="kp">Ganancia Kp</label><span class="val" id="kp-val"></span></div>
+                    <input type="range" id="kp" min="0.05" max="2" step="0.05" value="0.25">
+                </div>
+                <div class="field" id="f-ti">
+                    <div class="row"><label for="ti">Tiempo integral Ti (0 = sólo P)</label><span class="val" id="ti-val"></span></div>
+                    <input type="range" id="ti" min="0" max="40" step="1" value="15">
+                </div>
+                <div class="field" id="f-hys" hidden>
+                    <div class="row"><label for="hys">Histéresis</label><span class="val" id="hys-val"></span></div>
+                    <input type="range" id="hys" min="0.2" max="3" step="0.1" value="1">
+                </div>
+                <div class="field">
+                    <div class="row"><label for="dv">Offset de ventilación</label><span class="val" id="dv-val"></span></div>
+                    <input type="range" id="dv" min="0.5" max="5" step="0.5" value="2">
+                </div>
+                <div class="field">
+                    <div class="row"><label for="pb">Banda P de ventanas</label><span class="val" id="pb-val"></span></div>
+                    <input type="range" id="pb" min="0.5" max="8" step="0.5" value="3">
+                </div>
+            </section>
+        </aside>
+
+
+        <!-- ===== GRÁFICOs Y REGISTROS DE COLUMNA DERECHA ===== -->
+        <div class="charts">
+            <div class="chart">
+                <div class="head"><span class="title">Temperatura (°C)</span>
+                    <div class="legend">
+                        <span><i class="sw" style="background:var(--t-in)"></i>Temp. medida</span>
+                        <span><i class="sw" style="background:var(--t-sp)"></i>Val. Referencia</span>
+                        <span><i class="sw" style="background:var(--t-out)"></i>Temp. exterior</span>
+                        <span><i class="sw" style="background:var(--event)"></i>Evento</span>
+                    </div>
+                </div>
+                <canvas id="c-temp"></canvas>
+            </div>
+            <div class="chart">
+                <div class="head"><span class="title">Actuadores (% de salida)</span>
+                    <div class="legend">
+                        <span><i class="sw" style="background:var(--heat)"></i>Calefacción</span>
+                        <span><i class="sw" style="background:var(--vent)"></i>Ventanas</span>
+                    </div>
+                </div>
+                <canvas id="c-act"></canvas>
+            </div>
+            <div class="chart">
+                <div class="head"><span class="title">Radiación solar (W/m²)</span>
+                    <div class="legend"><span><i class="sw" style="background:var(--rad)"></i>Radiación que llega al invernadero</span></div>
+                </div>
+                <canvas id="c-dist"></canvas>
+            </div>
+            <section class="panel">
+                <h2>Registro de eventos</h2>
+                <ul class="log" id="log"><li class="empty">Todavía no hay eventos. Cambiá la entrada o agregá una perturbación.</li></ul>
+            </section>
+        </div>
+    </div>
+</div>
+
+<script src="simulacion.js"></script>
 </body>
 </html>
