@@ -136,5 +136,87 @@ function avanzar(minutos) {
     for (let i = 0; i < cantidadDePasos; i++) pasoSimulacion();
 }
 
+
+// ===== INTERFAZ =====
+// ===== HERRAMIENTAS =====
+// busca un elemento de la página por su id del HTML
+function elemento(id) {
+    return document.getElementById(id);
+}
+
+// decimales redonditos
+function formatear(valor, decimales) {
+    return valor.toFixed(decimales).replace(".", ",");
+}
+
+// conversor de minutos simulados a formato reloj
+function reloj(minutos) {
+    const horas = Math.floor(minutos / 60);
+    const mins = Math.floor(minutos) % 60;
+    return horas + ":" + (mins < 10 ? "0" : "") + mins;
+}
+
+
+// ===== INDICADORES =====
+function actualizarIndicadores() {
+    const error = entrada.referencia - estado.salida;
+    const signo = error >= 0 ? "+" : "−";
+
+    elemento("ro-t").textContent = formatear(estado.salida, 1) + " °C";
+    elemento("ro-sp").textContent = formatear(entrada.referencia, 1) + " °C";
+    elemento("ro-e").textContent = signo + formatear(Math.abs(error), 2) + " °C";
+    elemento("ro-h").textContent = formatear(estado.ordenCalefaccion * 100, 0) + " %";
+    elemento("ro-v").textContent = formatear(estado.aperturaVentanas * 100, 0) + " %";
+    elemento("status-txt").textContent = (corriendo ? "Corriendo" : "En pausa") + " · t = " + reloj(estado.tiempo);
+}
+
+
+// ===== BUCLE EN TIEMPO REAL =====
+let corriendo = false;       // arranca en pausa
+let instanteAnterior = null; // momento del cuadro anterior (ms)
+
+function cuadro(instanteActual) {
+    if (instanteAnterior === null) instanteAnterior = instanteActual;
+
+    // tiempo real desde el cuadro anterior en segundos
+    const segundosReales = Math.min(0.1, (instanteActual - instanteAnterior) / 1000);
+    instanteAnterior = instanteActual;
+
+    if (corriendo) {
+        const velocidad = parseFloat(elemento("speed").value); // minutos simulados por segundo real
+        avanzar(segundosReales * velocidad);
+    }
+
+    actualizarIndicadores();
+    requestAnimationFrame(cuadro); // pide el próximo cuadro y así hay bucle
+}
+
+
+// ===== BOTONES =====
+function ponerEnMarcha(valor) {
+  corriendo = valor;
+
+  const boton = elemento("btn-run");
+  if (corriendo) boton.textContent = "Pausar";
+  else if (estado.tiempo > 0) boton.textContent = "Continuar";
+  else boton.textContent = "Iniciar";
+
+  // la clase paused pone el punto naranja
+  elemento("status").classList.toggle("paused", !corriendo);
+}
+
+//boton de iniciar/pausa
+elemento("btn-run").addEventListener("click", function () {
+  ponerEnMarcha(!corriendo);
+});
+
+elemento("btn-reset").addEventListener("click", function () {
+  reiniciar();
+  ponerEnMarcha(false); // después de reiniciar queda en pausa
+});
+
+
+// ===== INICIO =====
 reiniciar();
-console.log("Temperatura inicial:", estado.tempReal, "°C");
+actualizarIndicadores();
+requestAnimationFrame(cuadro);
