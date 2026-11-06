@@ -41,6 +41,7 @@ const entrada = {
 let estado;
 let historia;          // valores pasados, para los gráficos
 let proximoRegistro;   // tiempo en que se guarda el próximo punto
+let eventos;           // cambios de referencia y perturbaciones para marcarlos en los gráficos
 
 function reiniciar() {
     estado = {
@@ -60,6 +61,8 @@ function reiniciar() {
         calefaccion: [], ventanas: [], radiacion: []
     };
     proximoRegistro = 0;
+    eventos = [];
+    mostrarRegistro();
 }
 
 // numero aleatorio con distribución normal para el ruido del sensor
@@ -240,9 +243,68 @@ function actualizarIndicadores() {
     elemento("status-txt").textContent = (corriendo ? "Corriendo" : "En pausa") + " · t = " + reloj(estado.tiempo);
 }
 
-// ===== BUCLE EN TIEMPO REAL =====
+// ===== REGISTRO DE EVENTOS =====
+
+function registrarEvento(texto) {
+    eventos.push({ tiempo: estado.tiempo, texto: texto });
+    mostrarRegistro();
+}
+
+// para mostrar los últimos 12 eventos en la lista de la página, del más nuevo al más viejo
+function mostrarRegistro() {
+    const lista = elemento("log");
+    lista.innerHTML = "";
+    if (eventos.length === 0) {
+        lista.innerHTML = '<li class="empty">Todavía no hay eventos. Cambiá la entrada o agregá una perturbación.</li>';
+        return;
+    }
+    const ultimos = eventos.slice(-12).reverse();
+    for (const evento of ultimos) {
+        const fila = document.createElement("li");
+        const hora = document.createElement("span");
+        hora.className = "t";
+        hora.textContent = reloj(evento.tiempo);
+        const descripcion = document.createElement("span");
+        descripcion.textContent = evento.texto;
+        fila.appendChild(hora);
+        fila.appendChild(descripcion);
+        lista.appendChild(fila);
+    }
+}
+
+// ===== VALOR DE REFERENCIA =====
+
+function mostrarReferencia() {
+    elemento("sp-val").textContent = formatear(entrada.referencia, 1) + " °C";
+    elemento("sp").value = entrada.referencia;
+    actualizarIndicadores();
+}
+
+// cambia la referencia y lo anota como evento
+function cambiarReferencia(nuevoValor) {
+    nuevoValor = limitar(Math.round(nuevoValor * 2) / 2, 10, 30);
+    if (nuevoValor === entrada.referencia) return;
+    entrada.referencia = nuevoValor;
+    mostrarReferencia();
+    registrarEvento("Referencia → " + formatear(nuevoValor, 1) + " °C");
+}
+
+// mientras se arrastra el slider cambia el valor; al soltarlo se anota el evento
+elemento("sp").addEventListener("input", function () {
+    entrada.referencia = parseFloat(elemento("sp").value);
+    mostrarReferencia();
+});
+elemento("sp").addEventListener("change", function () {
+    registrarEvento("Referencia → " + formatear(entrada.referencia, 1) + " °C");
+});
+
+// botones −1 y +1
+elemento("sp-up").addEventListener("click", function () { cambiarReferencia(entrada.referencia + 1); });
+elemento("sp-down").addEventListener("click", function () { cambiarReferencia(entrada.referencia - 1); });
+
 
 // ===== GRÁFICOS =====
+
 // lee una variable del CSS así los gráficos siguen al modo oscuro
 function variableCSS(nombre) {
     return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
@@ -272,7 +334,7 @@ function pasoDeGrilla(rango, cantidadDeseada) {
     return 10 * magnitud;
 }
 
-function dibujarGrafico(canvas, series, yMin, yMax) {
+function dibujarGrafico(canvas, series, yMin, yMax, conEtiquetas) {
     const { lapiz, ancho, alto } = prepararLienzo(canvas);
     const margen = { izq: 44, der: 20, arriba: 10, abajo: 22 };
     const anchoUtil = ancho - margen.izq - margen.der;
@@ -316,6 +378,19 @@ function dibujarGrafico(canvas, series, yMin, yMax) {
         lapiz.fillText(reloj(tiempo), x, margen.arriba + altoUtil + 6);
     }
 
+    // una línea vertical punteada en el momento en que ocurre cada evento
+    lapiz.strokeStyle = variableCSS("--event");
+    lapiz.setLineDash([3, 3]);
+    for (const evento of eventos) {
+        if (evento.tiempo < tiempoInicial) continue;
+        const x = Math.round(xDe(evento.tiempo)) + 0.5;
+        lapiz.beginPath();
+        lapiz.moveTo(x, margen.arriba);
+        lapiz.lineTo(x, margen.arriba + altoUtil);
+        lapiz.stroke();
+    }
+    lapiz.setLineDash([]);
+
     lapiz.save();
     lapiz.beginPath();
     lapiz.rect(margen.izq, margen.arriba, anchoUtil, altoUtil);
@@ -328,24 +403,40 @@ function dibujarGrafico(canvas, series, yMin, yMax) {
         lapiz.beginPath();
         let primerPunto = true;
         for (let i = 0; i < valores.length; i++) {
-        if (historia.tiempo[i] < tiempoInicial - 1) continue; // fuera de la ventana visible
-        const x = xDe(historia.tiempo[i]);
-        const y = yDe(valores[i]);
-        if (primerPunto) { lapiz.moveTo(x, y); primerPunto = false; }
-        else lapiz.lineTo(x, y);
+            if (historia.tiempo[i] < tiempoInicial - 1) continue; // fuera de la ventana visible
+            const x = xDe(historia.tiempo[i]);
+            const y = yDe(valores[i]);
+            if (primerPunto) { lapiz.moveTo(x, y); primerPunto = false; }
+            else lapiz.lineTo(x, y);
         }
         lapiz.stroke();
     }
     lapiz.restore();
 
+    // nombra cada evento al lado de su línea
+    if (conEtiquetas) {
+        lapiz.fillStyle = variableCSS("--event");
+        lapiz.font = "600 11px " + variableCSS("--font-ui");
+        lapiz.textBaseline = "top";
+        let xAnterior = -Infinity, fila = 0;
+        for (const evento of eventos) {
+            if (evento.tiempo < tiempoInicial) continue;
+            let x = xDe(evento.tiempo) + 4;
+            fila = (x - xAnterior < 110) ? (fila + 1) % 3 : 0; // si está muy cerca del anterior, baja una fila
+            xAnterior = x;
+            const texto = evento.texto.length > 22 ? evento.texto.slice(0, 21) + "…" : evento.texto;
+            if (x + lapiz.measureText(texto).width > ancho - margen.der) {
+                lapiz.textAlign = "right"; // si no entra a la derecha, se escribe a la izquierda de la línea
+                x -= 8;
+            } else {
+                lapiz.textAlign = "left";
+            }
+            lapiz.fillText(texto, x, margen.arriba + 2 + fila * 14);
+        }
+    }
+
     lapiz.strokeStyle = variableCSS("--line");
     lapiz.strokeRect(margen.izq + 0.5, margen.arriba + 0.5, anchoUtil - 1, altoUtil - 1);
-
-    const ahora = performance.now();
-    if (ahora - ultimoRefrescoIndicadores >= 500) {
-        actualizarIndicadores();
-        ultimoRefrescoIndicadores = ahora;
-    }
 }
 
 let ultimoRefrescoIndicadores = -Infinity;   // -Infinity: la primera vez se muestran enseguida
@@ -377,7 +468,7 @@ function dibujarTodo() {
         { dato: "tempExterior", color: "--t-out", grosor: 1.5 },
         { dato: "referencia", color: "--t-sp", grosor: 1.5, punteada: true },
         { dato: "salida", color: "--t-in", grosor: 2 }
-    ], tempMin, tempMax);
+    ], tempMin, tempMax, true);
 
     dibujarGrafico(elemento("c-act"), [
         { dato: "calefaccion", color: "--heat" },
@@ -388,8 +479,16 @@ function dibujarTodo() {
         { dato: "radiacion", color: "--rad" }
     ], 0, 1000);
 
-    actualizarIndicadores();
+    // los indicadores se refrescan 2 veces por segundo
+    const ahora = performance.now();
+    if (ahora - ultimoRefrescoIndicadores >= 500) {
+        actualizarIndicadores();
+        ultimoRefrescoIndicadores = ahora;
+    }
 }
+
+
+// ===== BUCLE EN TIEMPO REAL =====
 
 let corriendo = false;       // arranca en pausa
 let instanteAnterior = null; // momento del cuadro anterior (ms)
@@ -437,6 +536,8 @@ elemento("btn-reset").addEventListener("click", function () {
 
 
 // ===== INICIO =====
+
 reiniciar();
+mostrarReferencia();
 dibujarTodo();
 requestAnimationFrame(cuadro);
