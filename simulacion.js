@@ -161,9 +161,14 @@ function registrarHistoria() {
 }
 
 // avanza la simulación
+// si el tiempo pedido no alcanza para un paso completo, lo guarda y lo suma en el próximo cuadro
+let tiempoPendiente = 0;
 function avanzar(minutos) {
-    const cantidadDePasos = Math.round(minutos / PASO);
-    for (let i = 0; i < cantidadDePasos; i++) pasoSimulacion();
+  tiempoPendiente += minutos;
+  while (tiempoPendiente >= PASO) {
+    pasoSimulacion();
+    tiempoPendiente -= PASO;
+  }
 }
 
 
@@ -179,6 +184,12 @@ function formatear(valor, decimales) {
     return valor.toFixed(decimales).replace(".", ",");
 }
 
+function formatearConSigno(valor, decimales) {
+  const texto = formatear(Math.abs(valor), decimales);
+  if (Number(texto.replace(",", ".")) === 0) return texto;
+  return (valor > 0 ? "+" : "−") + texto;
+}
+
 // conversor de minutos simulados a formato reloj
 function reloj(minutos) {
     const horas = Math.floor(minutos / 60);
@@ -188,18 +199,32 @@ function reloj(minutos) {
 
 
 // ===== INDICADORES =====
+
+// promedio de un dato de la historia en los últimos minutos simulados
+function promedioReciente(dato, minutos, respaldo) {
+    let suma = 0, cantidad = 0;
+    for (let i = historia.tiempo.length - 1; i >= 0 && historia.tiempo[i] >= estado.tiempo - minutos; i--) {
+        suma += historia[dato][i];
+        cantidad++;
+    }
+    return cantidad > 0 ? suma / cantidad : respaldo;
+}
+
 function actualizarIndicadores() {
-    const error = entrada.referencia - estado.salida;
-    const signo = error >= 0 ? "+" : "−";
+    // Valores filtrados: promedio del último minuto simulado, para que el ruido no haga temblar los números
+    const tempMostrada = promedioReciente("salida", 1, estado.salida);
+    const calefaccionMostrada = promedioReciente("calefaccion", 1, estado.ordenCalefaccion * 100);
+    const ventanasMostradas = promedioReciente("ventanas", 1, estado.aperturaVentanas * 100);
 
-    elemento("ro-t").textContent = formatear(estado.salida, 1) + " °C";
+    const error = entrada.referencia - tempMostrada;
+
+    elemento("ro-t").textContent = formatear(tempMostrada, 1) + " °C";
     elemento("ro-sp").textContent = formatear(entrada.referencia, 1) + " °C";
-    elemento("ro-e").textContent = signo + formatear(Math.abs(error), 2) + " °C";
-    elemento("ro-h").textContent = formatear(estado.ordenCalefaccion * 100, 0) + " %";
-    elemento("ro-v").textContent = formatear(estado.aperturaVentanas * 100, 0) + " %";
-    elemento("status-txt").textContent = (corriendo ? "Corriendo" : "En pausa") + " · t = " + reloj(estado.tiempo);
+    elemento("ro-e").textContent = formatearConSigno(error, 1) + " °C";
+    elemento("ro-h").textContent = formatear(calefaccionMostrada, 0) + " %";
+    elemento("ro-v").textContent = formatear(ventanasMostradas, 0) + " %";
 
-    // muestra el error en estado estacionario
+    // Error medio de los últimos 10 minutos (muestra el error en estado estacionario)
     let suma = 0, cantidad = 0;
     for (let i = historia.tiempo.length - 1; i >= 0 && historia.tiempo[i] >= estado.tiempo - 10; i--) {
         suma += historia.referencia[i] - historia.salida[i];
@@ -207,12 +232,13 @@ function actualizarIndicadores() {
     }
     if (cantidad > 0) {
         const errorMedio = suma / cantidad;
-        elemento("ro-ess").textContent = (errorMedio >= 0 ? "+" : "−") + formatear(Math.abs(errorMedio), 2) + " °C";
+        elemento("ro-ess").textContent = formatearConSigno(errorMedio, 2) + " °C";
     } else {
         elemento("ro-ess").textContent = "–";
     }
-}
 
+    elemento("status-txt").textContent = (corriendo ? "Corriendo" : "En pausa") + " · t = " + reloj(estado.tiempo);
+}
 
 // ===== BUCLE EN TIEMPO REAL =====
 
@@ -314,7 +340,15 @@ function dibujarGrafico(canvas, series, yMin, yMax) {
 
     lapiz.strokeStyle = variableCSS("--line");
     lapiz.strokeRect(margen.izq + 0.5, margen.arriba + 0.5, anchoUtil - 1, altoUtil - 1);
+
+    const ahora = performance.now();
+    if (ahora - ultimoRefrescoIndicadores >= 500) {
+        actualizarIndicadores();
+        ultimoRefrescoIndicadores = ahora;
+    }
 }
+
+let ultimoRefrescoIndicadores = -Infinity;   // -Infinity: la primera vez se muestran enseguida
 
 // calcula el rango del eje Y según los valores visibles, con un margen
 function rangoVisible(datos, margenExtra, rangoMinimo) {
@@ -379,25 +413,26 @@ function cuadro(instanteActual) {
 
 // ===== BOTONES =====
 function ponerEnMarcha(valor) {
-  corriendo = valor;
+    corriendo = valor;
 
-  const boton = elemento("btn-run");
-  if (corriendo) boton.textContent = "Pausar";
-  else if (estado.tiempo > 0) boton.textContent = "Continuar";
-  else boton.textContent = "Iniciar";
+    const boton = elemento("btn-run");
+    if (corriendo) boton.textContent = "Pausar";
+    else if (estado.tiempo > 0) boton.textContent = "Continuar";
+    else boton.textContent = "Iniciar";
 
-  // la clase paused pone el punto naranja
-  elemento("status").classList.toggle("paused", !corriendo);
+    // la clase paused pone el punto naranja
+    elemento("status").classList.toggle("paused", !corriendo);
+    actualizarIndicadores();
 }
 
 //boton de iniciar/pausa
 elemento("btn-run").addEventListener("click", function () {
-  ponerEnMarcha(!corriendo);
+    ponerEnMarcha(!corriendo);
 });
 
 elemento("btn-reset").addEventListener("click", function () {
-  reiniciar();
-  ponerEnMarcha(false); // después de reiniciar queda en pausa
+    reiniciar();
+    ponerEnMarcha(false); // después de reiniciar queda en pausa
 });
 
 
