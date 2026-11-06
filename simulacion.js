@@ -16,7 +16,10 @@ const parametros = {
     ruidoSensor: 0.03          // desvío estándar del ruido del sensor (°C)
 };
 
-const PASO = 0.02;  // paso de integración (min)
+const PASO = 0.02;    // paso de integración (min)
+const REGISTRO = 0.1; // cada cuántos minutos simulados se guarda un punto para los gráficos
+const VENTANA = 120;  // minutos visibles en los gráficos
+const MEMORIA = 240;  // minutos de historia que se guardan
 
 
 // ===== ENTRADAS FIJAS =====
@@ -36,6 +39,8 @@ const entrada = {
 
 // ===== ESTADO DEL SISTEMA =====
 let estado;
+let historia;          // valores pasados, para los gráficos
+let proximoRegistro;   // tiempo en que se guarda el próximo punto
 
 function reiniciar() {
     estado = {
@@ -49,6 +54,12 @@ function reiniciar() {
         aperturaVentanas: 0,        // apertura de las ventanas (0 a 1)
         salida: 20                  // medición con ruido: la salida del sistema (°C)
     };
+
+    historia = {
+        tiempo: [], salida: [], referencia: [], tempExterior: [],
+        calefaccion: [], ventanas: [], radiacion: []
+    };
+    proximoRegistro = 0;
 }
 
 // numero aleatorio con distribución normal para el ruido del sensor
@@ -128,6 +139,25 @@ function pasoSimulacion() {
     estado.ordenCalefaccion = ordenCalefaccion;
     estado.aperturaVentanas = aperturaVentanas;
     estado.tiempo += PASO;
+    registrarHistoria();
+}
+
+// guarda un punto cada REGISTRO minutos y borra lo más viejo
+function registrarHistoria() {
+    if (estado.tiempo < proximoRegistro) return;
+    proximoRegistro += REGISTRO;
+
+    historia.tiempo.push(estado.tiempo);
+    historia.salida.push(estado.salida);
+    historia.referencia.push(entrada.referencia);
+    historia.tempExterior.push(entrada.tempExterior);
+    historia.calefaccion.push(estado.ordenCalefaccion * 100);   // en %
+    historia.ventanas.push(estado.aperturaVentanas * 100);      // en %
+    historia.radiacion.push(entrada.radiacion);
+
+    while (historia.tiempo.length > 0 && historia.tiempo[0] < estado.tiempo - MEMORIA) {
+        for (const clave in historia) historia[clave].shift();
+    }
 }
 
 // avanza la simulación
@@ -168,10 +198,165 @@ function actualizarIndicadores() {
     elemento("ro-h").textContent = formatear(estado.ordenCalefaccion * 100, 0) + " %";
     elemento("ro-v").textContent = formatear(estado.aperturaVentanas * 100, 0) + " %";
     elemento("status-txt").textContent = (corriendo ? "Corriendo" : "En pausa") + " · t = " + reloj(estado.tiempo);
+
+    // muestra el error en estado estacionario
+    let suma = 0, cantidad = 0;
+    for (let i = historia.tiempo.length - 1; i >= 0 && historia.tiempo[i] >= estado.tiempo - 10; i--) {
+        suma += historia.referencia[i] - historia.salida[i];
+        cantidad++;
+    }
+    if (cantidad > 0) {
+        const errorMedio = suma / cantidad;
+        elemento("ro-ess").textContent = (errorMedio >= 0 ? "+" : "−") + formatear(Math.abs(errorMedio), 2) + " °C";
+    } else {
+        elemento("ro-ess").textContent = "–";
+    }
 }
 
 
 // ===== BUCLE EN TIEMPO REAL =====
+
+// ===== GRÁFICOS =====
+// lee una variable del CSS así los gráficos siguen al modo oscuro
+function variableCSS(nombre) {
+    return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
+}
+
+function prepararLienzo(canvas) {
+    const escala = window.devicePixelRatio || 1;
+    const medidas = canvas.getBoundingClientRect();
+    const anchoPx = Math.round(medidas.width * escala);
+    const altoPx = Math.round(medidas.height * escala);
+    if (canvas.width !== anchoPx || canvas.height !== altoPx) {
+        canvas.width = anchoPx;
+        canvas.height = altoPx;
+    }
+    const lapiz = canvas.getContext("2d");
+    lapiz.setTransform(escala, 0, 0, escala, 0, 0);
+    return {lapiz: lapiz, ancho: medidas.width, alto: medidas.height};
+}
+
+function pasoDeGrilla(rango, cantidadDeseada) {
+    const bruto = rango / cantidadDeseada;
+    const magnitud = Math.pow(10, Math.floor(Math.log10(bruto)));
+    const relativo = bruto / magnitud;
+    if (relativo < 1.5) return 1 * magnitud;
+    if (relativo < 3) return 2 * magnitud;
+    if (relativo < 7) return 5 * magnitud;
+    return 10 * magnitud;
+}
+
+function dibujarGrafico(canvas, series, yMin, yMax) {
+    const { lapiz, ancho, alto } = prepararLienzo(canvas);
+    const margen = { izq: 44, der: 20, arriba: 10, abajo: 22 };
+    const anchoUtil = ancho - margen.izq - margen.der;
+    const altoUtil = alto - margen.arriba - margen.abajo;
+
+    const tiempoFinal = Math.max(estado.tiempo, VENTANA);
+    const tiempoInicial = tiempoFinal - VENTANA;
+
+    // conversion de valores del sistema a pixeles de la pantalla
+    const xDe = (tiempo) => margen.izq + (tiempo - tiempoInicial) / VENTANA * anchoUtil;
+    const yDe = (valor) => margen.arriba + (1 - (valor - yMin) / (yMax - yMin)) * altoUtil;
+
+    lapiz.clearRect(0, 0, ancho, alto);
+    lapiz.font = "11px " + variableCSS("--font-data");
+    lapiz.lineWidth = 1;
+    lapiz.setLineDash([]);
+
+    const paso = pasoDeGrilla(yMax - yMin, 5);
+    lapiz.strokeStyle = variableCSS("--line");
+    lapiz.fillStyle = variableCSS("--muted");
+    lapiz.textAlign = "right";
+    lapiz.textBaseline = "middle";
+    for (let valor = Math.ceil(yMin / paso) * paso; valor <= yMax + 1e-9; valor += paso) {
+        const y = Math.round(yDe(valor)) + 0.5;
+        lapiz.beginPath();
+        lapiz.moveTo(margen.izq, y);
+        lapiz.lineTo(ancho - margen.der, y);
+        lapiz.stroke();
+        lapiz.fillText(formatear(valor, 0), margen.izq - 6, y);
+    }
+
+    // marcas del eje X (tiempo), cada 20 minutos
+    lapiz.textAlign = "center";
+    lapiz.textBaseline = "top";
+    for (let tiempo = Math.ceil(tiempoInicial / 20) * 20; tiempo <= tiempoFinal + 1e-9; tiempo += 20) {
+        const x = Math.round(xDe(tiempo)) + 0.5;
+        lapiz.beginPath();
+        lapiz.moveTo(x, margen.arriba + altoUtil);
+        lapiz.lineTo(x, margen.arriba + altoUtil + 4);
+        lapiz.stroke();
+        lapiz.fillText(reloj(tiempo), x, margen.arriba + altoUtil + 6);
+    }
+
+    lapiz.save();
+    lapiz.beginPath();
+    lapiz.rect(margen.izq, margen.arriba, anchoUtil, altoUtil);
+    lapiz.clip();   // nada se dibuja fuera del recuadro
+    for (const serie of series) {
+        const valores = historia[serie.dato];
+        lapiz.strokeStyle = variableCSS(serie.color);
+        lapiz.lineWidth = serie.grosor || 1.75;
+        lapiz.setLineDash(serie.punteada ? [6, 4] : []);
+        lapiz.beginPath();
+        let primerPunto = true;
+        for (let i = 0; i < valores.length; i++) {
+        if (historia.tiempo[i] < tiempoInicial - 1) continue; // fuera de la ventana visible
+        const x = xDe(historia.tiempo[i]);
+        const y = yDe(valores[i]);
+        if (primerPunto) { lapiz.moveTo(x, y); primerPunto = false; }
+        else lapiz.lineTo(x, y);
+        }
+        lapiz.stroke();
+    }
+    lapiz.restore();
+
+    lapiz.strokeStyle = variableCSS("--line");
+    lapiz.strokeRect(margen.izq + 0.5, margen.arriba + 0.5, anchoUtil - 1, altoUtil - 1);
+}
+
+// calcula el rango del eje Y según los valores visibles, con un margen
+function rangoVisible(datos, margenExtra, rangoMinimo) {
+    const tiempoInicial = Math.max(estado.tiempo, VENTANA) - VENTANA;
+    let minimo = Infinity, maximo = -Infinity;
+    for (const dato of datos) {
+        historia[dato].forEach(function (valor, i) {
+        if (historia.tiempo[i] < tiempoInicial) return;
+        minimo = Math.min(minimo, valor);
+        maximo = Math.max(maximo, valor);
+        });
+    }
+    if (!isFinite(minimo)) { minimo = 15; maximo = 25; }
+    if (maximo - minimo < rangoMinimo) {
+        const medio = (maximo + minimo) / 2;
+        minimo = medio - rangoMinimo / 2;
+        maximo = medio + rangoMinimo / 2;
+    }
+    return [Math.floor(minimo - margenExtra), Math.ceil(maximo + margenExtra)];
+}
+
+// dibuja los tres gráficos y actualiza los indicadores
+function dibujarTodo() {
+    const [tempMin, tempMax] = rangoVisible(["salida", "referencia", "tempExterior"], 1, 6);
+    dibujarGrafico(elemento("c-temp"), [
+        { dato: "tempExterior", color: "--t-out", grosor: 1.5 },
+        { dato: "referencia", color: "--t-sp", grosor: 1.5, punteada: true },
+        { dato: "salida", color: "--t-in", grosor: 2 }
+    ], tempMin, tempMax);
+
+    dibujarGrafico(elemento("c-act"), [
+        { dato: "calefaccion", color: "--heat" },
+        { dato: "ventanas", color: "--vent" }
+    ], 0, 100);
+
+    dibujarGrafico(elemento("c-dist"), [
+        { dato: "radiacion", color: "--rad" }
+    ], 0, 1000);
+
+    actualizarIndicadores();
+}
+
 let corriendo = false;       // arranca en pausa
 let instanteAnterior = null; // momento del cuadro anterior (ms)
 
@@ -187,7 +372,7 @@ function cuadro(instanteActual) {
         avanzar(segundosReales * velocidad);
     }
 
-    actualizarIndicadores();
+    dibujarTodo();
     requestAnimationFrame(cuadro); // pide el próximo cuadro y así hay bucle
 }
 
@@ -218,5 +403,5 @@ elemento("btn-reset").addEventListener("click", function () {
 
 // ===== INICIO =====
 reiniciar();
-actualizarIndicadores();
+dibujarTodo();
 requestAnimationFrame(cuadro);
