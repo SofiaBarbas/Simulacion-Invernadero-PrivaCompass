@@ -39,9 +39,10 @@ const entrada = {
 
 // ===== ESTADO DEL SISTEMA =====
 let estado;
-let historia;          // valores pasados, para los gráficos
-let proximoRegistro;   // tiempo en que se guarda el próximo punto
-let eventos;           // cambios de referencia y perturbaciones para marcarlos en los gráficos
+let historia;                 // valores pasados, para los gráficos
+let proximoRegistro;          // tiempo en que se guarda el próximo punto
+let eventos;                  // cambios de referencia y perturbaciones para marcarlos en los gráficos
+let perturbacionesTemporales; // pico de sol y puerta abierta
 
 function reiniciar() {
     estado = {
@@ -53,7 +54,8 @@ function reiniciar() {
         integral: 0.4,              // parte integral del PI (paso 5)
         ordenCalefaccion: 0.4,      // orden que da el controlador a la calefacción (0 a 1)
         aperturaVentanas: 0,        // apertura de las ventanas (0 a 1)
-        salida: 20                  // medición con ruido: la salida del sistema (°C)
+        salida: 20,                  // medición con ruido: la salida del sistema (°C)
+        radiacionEfectiva: 150      // radiación que llega de verdad (slider + pico de sol)
     };
 
     historia = {
@@ -62,6 +64,7 @@ function reiniciar() {
     };
     proximoRegistro = 0;
     eventos = [];
+    perturbacionesTemporales = [];
     mostrarRegistro();
 }
 
@@ -86,7 +89,7 @@ function controlCalefaccion(error) {
     // Feedforward: si hay sol, bajamos la calefacción por adelantado
     // en la misma cantidad de calor que va a aportar el sol
     const compensacionSol = entrada.feedforward
-        ? (parametros.gananciaSol * entrada.radiacion) / parametros.gananciaCalefaccion
+        ? (parametros.gananciaSol * estado.radiacionEfectiva) / parametros.gananciaCalefaccion
         : 0;
 
     const ordenSinLimite = parteProporcional + parteIntegral - compensacionSol;
@@ -115,6 +118,17 @@ function controlVentanas(medicion) {
 function pasoSimulacion() {
     const p = parametros;
 
+    // --- Perturbaciones temporales activas en el momento ---
+    let solExtra = 0;
+    let perdidaPuertaAhora = 0;
+    for (const perturbacion of perturbacionesTemporales) {
+        const activa = estado.tiempo >= perturbacion.inicio && estado.tiempo < perturbacion.fin;
+        if (!activa) continue;
+        if (perturbacion.tipo === "sol") solExtra = Math.max(solExtra, perturbacion.valor);
+        if (perturbacion.tipo === "puerta") perdidaPuertaAhora = p.perdidaPuerta;
+    }
+    estado.radiacionEfectiva = Math.min(1000, entrada.radiacion + solExtra);
+
     // --- Elemento de medicion: el sensor sigue a la temperatura real con retardo ---
     estado.tempMedida += PASO * (estado.tempReal - estado.tempMedida) / p.retardoSensor;
     estado.salida = estado.tempMedida + p.ruidoSensor * ruidoGaussiano();
@@ -130,10 +144,10 @@ function pasoSimulacion() {
 
     // --- Planta: balance de calor del aire del sector ---
     const viento = entrada.viento;
-    const perdidas = 1 + p.perdidaVentanas * aperturaVentanas * (1 + 0.15 * viento) + 0.03 * viento;
+    const perdidas = 1 + p.perdidaVentanas * aperturaVentanas * (1 + 0.15 * viento) + 0.03 * viento + perdidaPuertaAhora;
     const calorQueSale = perdidas * (estado.tempReal - entrada.tempExterior);
     const calorCalefaccion = p.gananciaCalefaccion * estado.potenciaCalefaccion;
-    const calorSol = p.gananciaSol * entrada.radiacion;
+    const calorSol = p.gananciaSol * estado.radiacionEfectiva;
     const velocidadDeCambio = (calorCalefaccion + calorSol - calorQueSale) / p.constanteTiempo;
 
     estado.tempReal += PASO * velocidadDeCambio; // método de Euler
@@ -143,6 +157,9 @@ function pasoSimulacion() {
     estado.aperturaVentanas = aperturaVentanas;
     estado.tiempo += PASO;
     registrarHistoria();
+    
+    // las perturbaciones que ya terminaron se borran de la lista
+    perturbacionesTemporales = perturbacionesTemporales.filter((perturbacion) => perturbacion.fin > estado.tiempo);
 }
 
 // guarda un punto cada REGISTRO minutos y borra lo más viejo
@@ -156,8 +173,8 @@ function registrarHistoria() {
     historia.tempExterior.push(entrada.tempExterior);
     historia.calefaccion.push(estado.ordenCalefaccion * 100);   // en %
     historia.ventanas.push(estado.aperturaVentanas * 100);      // en %
-    historia.radiacion.push(entrada.radiacion);
-
+    historia.radiacion.push(estado.radiacionEfectiva);
+    
     while (historia.tiempo.length > 0 && historia.tiempo[0] < estado.tiempo - MEMORIA) {
         for (const clave in historia) historia[clave].shift();
     }
@@ -486,6 +503,60 @@ function dibujarTodo() {
         ultimoRefrescoIndicadores = ahora;
     }
 }
+
+
+// ===== PERTURBACIONES =====
+
+// conecta un slider con un valor de "entrada": lo muestra al lado y anota el evento al soltarlo
+function conectarSlider(id, clave, unidad, decimales, nombreEvento) {
+    const slider = elemento(id);
+    const texto = elemento(id + "-val");
+    function mostrar() {
+        texto.textContent = formatear(entrada[clave], decimales) + unidad;
+    }
+    slider.addEventListener("input", function () {
+        entrada[clave] = parseFloat(slider.value);
+        mostrar();
+    });
+    slider.addEventListener("change", function () {
+        registrarEvento(nombreEvento + " → " + formatear(entrada[clave], decimales) + unidad);
+    });
+    entrada[clave] = parseFloat(slider.value);   // al abrir la página, toma el valor inicial del HTML
+    mostrar();
+}
+
+conectarSlider("text", "tempExterior", " °C", 1, "T exterior");
+conectarSlider("rad", "radiacion", " W/m²", 0, "Radiación");
+conectarSlider("wind", "viento", " m/s", 1, "Viento");
+
+// pico de sol: +700 W/m² durante 20 minutos (perturbación externa temporal)
+elemento("ev-sun").addEventListener("click", function () {
+    perturbacionesTemporales.push({ tipo: "sol", inicio: estado.tiempo, fin: estado.tiempo + 20, valor: 700 });
+    registrarEvento("Pico de sol (+700 W/m²)");
+});
+
+// frente frío: la temperatura exterior baja 8 °C de golpe (perturbación externa en escalón)
+elemento("ev-cold").addEventListener("click", function () {
+    entrada.tempExterior = Math.max(-10, entrada.tempExterior - 8);
+    elemento("text").value = entrada.tempExterior;
+    elemento("text-val").textContent = formatear(entrada.tempExterior, 1) + " °C";
+    registrarEvento("Frente frío: T ext → " + formatear(entrada.tempExterior, 1) + " °C");
+});
+
+// puerta abierta: se escapa calor durante 5 minutos (perturbación interna temporal)
+elemento("ev-door").addEventListener("click", function () {
+    perturbacionesTemporales.push({ tipo: "puerta", inicio: estado.tiempo, fin: estado.tiempo + 5 });
+    registrarEvento("Puerta abierta 5 min");
+});
+
+// lluvia: las ventanas no pueden abrir más del 10 % (para proteger el cultivo)
+elemento("ev-rain").addEventListener("click", function () {
+    entrada.lluvia = !entrada.lluvia;
+    const boton = elemento("ev-rain");
+    boton.textContent = "Lluvia: " + (entrada.lluvia ? "sí" : "no");
+    boton.setAttribute("aria-pressed", entrada.lluvia);
+    registrarEvento(entrada.lluvia ? "Empieza a llover" : "Para de llover");
+});
 
 
 // ===== BUCLE EN TIEMPO REAL =====
