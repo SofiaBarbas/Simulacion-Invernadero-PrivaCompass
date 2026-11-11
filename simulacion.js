@@ -22,7 +22,7 @@ const VENTANA = 120;  // minutos visibles en los gráficos
 const MEMORIA = 240;  // minutos de historia que se guardan
 
 
-// ===== ENTRADAS FIJAS =====
+// ===== ENTRADAS =====
 const entrada = {
     referencia: 20,          // valor de referencia (°C)
     tempExterior: 8,         // temperatura exterior (°C)
@@ -51,10 +51,10 @@ function reiniciar() {
         tempMedida: 20,             // temperatura que "ve" el sensor (°C)
         etapa1Calefaccion: 0.4,     // primera etapa de retardo de la calefacción
         potenciaCalefaccion: 0.4,   // calor que llega al aire (0 a 1)
-        integral: 0.4,              // parte integral del PI (paso 5)
+        integral: 0.4,              // parte integral del PI
         ordenCalefaccion: 0.4,      // orden que da el controlador a la calefacción (0 a 1)
         aperturaVentanas: 0,        // apertura de las ventanas (0 a 1)
-        salida: 20,                  // medición con ruido: la salida del sistema (°C)
+        salida: 20,                 // medición con ruido: la salida del sistema (°C)
         radiacionEfectiva: 150      // radiación que llega de verdad (slider + pico de sol)
     };
 
@@ -100,7 +100,7 @@ function controlCalefaccion(error) {
         const topeArriba = ordenSinLimite >= 1 && error > 0;
         const topeAbajo = ordenSinLimite <= 0 && error < 0;
         if (!topeArriba && !topeAbajo) {
-        estado.integral += (entrada.kp / entrada.ti) * error * PASO;
+            estado.integral += (entrada.kp / entrada.ti) * error * PASO;
         }
     }
     return orden;
@@ -184,11 +184,11 @@ function registrarHistoria() {
 // si el tiempo pedido no alcanza para un paso completo, lo guarda y lo suma en el próximo cuadro
 let tiempoPendiente = 0;
 function avanzar(minutos) {
-  tiempoPendiente += minutos;
-  while (tiempoPendiente >= PASO) {
-    pasoSimulacion();
-    tiempoPendiente -= PASO;
-  }
+    tiempoPendiente += minutos;
+    while (tiempoPendiente >= PASO) {
+        pasoSimulacion();
+        tiempoPendiente -= PASO;
+    }
 }
 
 
@@ -205,9 +205,9 @@ function formatear(valor, decimales) {
 }
 
 function formatearConSigno(valor, decimales) {
-  const texto = formatear(Math.abs(valor), decimales);
-  if (Number(texto.replace(",", ".")) === 0) return texto;
-  return (valor > 0 ? "+" : "−") + texto;
+    const texto = formatear(Math.abs(valor), decimales);
+    if (Number(texto.replace(",", ".")) === 0) return texto;
+    return (valor > 0 ? "+" : "−") + texto;
 }
 
 // conversor de minutos simulados a formato reloj
@@ -464,9 +464,9 @@ function rangoVisible(datos, margenExtra, rangoMinimo) {
     let minimo = Infinity, maximo = -Infinity;
     for (const dato of datos) {
         historia[dato].forEach(function (valor, i) {
-        if (historia.tiempo[i] < tiempoInicial) return;
-        minimo = Math.min(minimo, valor);
-        maximo = Math.max(maximo, valor);
+            if (historia.tiempo[i] < tiempoInicial) return;
+            minimo = Math.min(minimo, valor);
+            maximo = Math.max(maximo, valor);
         });
     }
     if (!isFinite(minimo)) { minimo = 15; maximo = 25; }
@@ -556,6 +556,21 @@ elemento("ev-rain").addEventListener("click", function () {
     boton.textContent = "Lluvia: " + (entrada.lluvia ? "sí" : "no");
     boton.setAttribute("aria-pressed", entrada.lluvia);
     registrarEvento(entrada.lluvia ? "Empieza a llover" : "Para de llover");
+});
+
+
+// ===== MANDOS DEL CONTROLADOR =====
+
+// sliders para los parámetros de las leyes de control
+conectarSlider("kp", "kp", "", 2, "Kp");
+conectarSlider("ti", "ti", " min", 0, "Ti");
+conectarSlider("dv", "offsetVentilacion", " °C", 1, "Offset ventilación");
+conectarSlider("pb", "bandaVentanas", " °C", 1, "Banda P ventanas");
+
+// casilla de feedforward: activa o desactiva la compensación por radiación
+elemento("ff").addEventListener("change", function () {
+    entrada.feedforward = elemento("ff").checked;
+    registrarEvento("Feedforward " + (entrada.feedforward ? "activado" : "desactivado"));
 });
 
 
